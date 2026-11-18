@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: the workflow only reads the repository. No cloud credentials are used anywhere.
+# Third-party actions are pinned to full commit SHAs (a tag can be moved to malicious code);
+# Dependabot keeps the pins and the version comments up to date.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-and-test:
+    name: Build & test (.NET)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore EventRelay.slnx
+
+      - name: Build (warnings are errors)
+        run: dotnet build EventRelay.slnx -c Release --no-restore
+
+      - name: Unit tests
+        run: dotnet test --project tests/EventRelay.Core.Tests -c Release --no-build
+
+      # Testcontainers starts PostgreSQL and the Azure Service Bus emulator on the runner's Docker.
+      - name: Integration tests
+        run: dotnet test --project tests/EventRelay.IntegrationTests -c Release --no-build
+
+  docker:
+    name: Docker images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The compose file requires credentials from .env; the example placeholders are enough to build.
+      - name: Create .env from the example
+        run: cp .env.example .env
+
+      - name: Validate compose file
+        run: docker compose config --quiet
+
+      - name: Build images
+        run: docker compose build
+
+  terraform:
+    name: Terraform fmt & validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.2
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      # -backend=false: nothing is ever connected to a real Azure subscription.
+      - name: terraform init
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        run: terraform validate
