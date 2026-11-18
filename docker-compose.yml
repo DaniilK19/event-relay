@@ -1,0 +1,157 @@
+# Local demo:
+#
+#   cp .env.example .env      # then replace the placeholder values
+#   docker compose up --build
+#
+# Credentials are never written in this file: they are required variables read from `.env`
+# (git-ignored), and compose refuses to start if one is missing. Published ports are bound to
+# 127.0.0.1, so nothing in this stack is reachable from other machines on your network.
+#
+# Starting this stack accepts the licence terms of the Azure Service Bus emulator
+# (https://github.com/Azure/azure-service-bus-emulator-installer/blob/main/EMULATOR_EULA.txt)
+# and SQL Server Developer Edition, which the emulator uses for storage.
+
+name: event-relay
+
+x-dotnet-service: &dotnet-service
+  restart: on-failure
+  environment: &dotnet-env
+    DOTNET_ENVIRONMENT: Production
+    ASPNETCORE_ENVIRONMENT: Production
+    # GSS (Kerberos) encryption is off: unused here, and the runtime image has no libgssapi.
+    ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-eventrelay};Username=${POSTGRES_USER:-eventrelay};Password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (cp .env.example .env)};GSS Encryption Mode=Disable
+    # Not a secret: the emulator only accepts this fixed, publicly documented placeholder key.
+    ConnectionStrings__ServiceBus: Endpoint=sb://servicebus-emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;
+    Webhooks__AllowedHosts__0: webhook-receiver
+    Webhooks__RequireHttps: "false"
+    # The receiver lives on the private Docker network, so private addresses must be allowed here.
+    # Link-local addresses (cloud metadata, 169.254.169.254) stay blocked regardless.
+    Webhooks__AllowPrivateNetworks: "true"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-eventrelay}
+      POSTGRES_USER: ${POSTGRES_USER:-eventrelay}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (cp .env.example .env)}
+    ports:
+      - "127.0.0.1:5432:5432" # for `dotnet run` and database tools on this machine only
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Storage for the Service Bus emulator. (The emulator's own samples still mention
+  # Azure SQL Edge, which has been retired; SQL Server 2022 is the supported option.)
+  # No published port: only the emulator talks to it.
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in .env (cp .env.example .env)}
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$${MSSQL_SA_PASSWORD}\" -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  servicebus-emulator:
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.1
+    volumes:
+      - ./docker/servicebus-emulator/config.json:/ServiceBus_Emulator/ConfigFiles/Config.json:ro
+    environment:
+      SQL_SERVER: mssql
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in .env (cp .env.example .env)}
+      ACCEPT_EULA: "Y"
+    ports:
+      - "127.0.0.1:5672:5672" # AMQP, for `dotnet run`
+      - "127.0.0.1:5300:5300" # emulator health endpoint
+    depends_on:
+      mssql:
+        condition: service_healthy
+
+  api:
+    <<: *dotnet-service
+    build:
+      context: .
+      args:
+        PROJECT: src/EventRelay.Api/EventRelay.Api.csproj
+    image: eventrelay-api:local
+    environment:
+      <<: *dotnet-env
+      Database__MigrateOnStartup: "true"
+      ApiKeys__Publisher__0: ${PUBLISHER_API_KEY:?set PUBLISHER_API_KEY in .env (cp .env.example .env)}
+      ApiKeys__Admin__0: ${ADMIN_API_KEY:?set ADMIN_API_KEY in .env (cp .env.example .env)}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      servicebus-emulator:
+        condition: service_started
+    healthcheck:
+      # The runtime image has no curl; bash can open a TCP socket and speak HTTP/1.0.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q ' 200 ' <&3"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  dispatcher:
+    <<: *dotnet-service
+    build:
+      context: .
+      args:
+        PROJECT: src/EventRelay.Dispatcher/EventRelay.Dispatcher.csproj
+    image: eventrelay-dispatcher:local
+    environment:
+      <<: *dotnet-env
+      # Short delays so retries are visible in the demo (production defaults: 5s base, 8 attempts).
+      Delivery__RetryBaseDelay: "00:00:02"
+      Delivery__RetryMaxDelay: "00:01:00"
+      Delivery__MaxAttempts: "6"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  webhook-receiver:
+    <<: *dotnet-service
+    build:
+      context: .
+      args:
+        PROJECT: samples/WebhookReceiver/WebhookReceiver.csproj
+    image: eventrelay-webhook-receiver:local
+    environment:
+      Receiver__EventRelayUrl: http://api:8080
+      # Registers its own demo subscriptions, which needs the admin key.
+      Receiver__ApiKey: ${ADMIN_API_KEY:?set ADMIN_API_KEY in .env (cp .env.example .env)}
+      Receiver__PublicBaseUrl: http://webhook-receiver:8080
+      Receiver__Secret: ${WEBHOOK_SECRET:?set WEBHOOK_SECRET in .env (cp .env.example .env)}
+      Receiver__FlakyFailureRate: ${FLAKY_FAILURE_RATE:-0.3}
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  simulator:
+    <<: *dotnet-service
+    build:
+      context: .
+      args:
+        PROJECT: samples/FlightStatus.Simulator/FlightStatus.Simulator.csproj
+    image: eventrelay-simulator:local
+    environment:
+      Simulator__EventRelayUrl: http://api:8080
+      Simulator__ApiKey: ${PUBLISHER_API_KEY:?set PUBLISHER_API_KEY in .env (cp .env.example .env)}
+      Simulator__Interval: ${SIMULATOR_INTERVAL:-00:00:03}
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
