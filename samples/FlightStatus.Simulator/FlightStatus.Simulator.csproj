@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <!-- Shared by the four runnable projects: local secrets are set once (see README, "Run without Docker"). -->
+    <UserSecretsId>eventrelay-local-dev</UserSecretsId>
+  </PropertyGroup>
+
+  <!-- Sample producer. Talks to EventRelay over HTTP only, no project references. -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+  </ItemGroup>
+
+</Project>
