@@ -1,0 +1,40 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+appsettings.*.local.json
+
+# Terraform: state and variable files may contain secrets
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+.terraform/
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.tfplan
+
+# .NET build output
+bin/
+obj/
+TestResults/
+*.trx
+coverage*.xml
+*.binlog
+
+# IDEs and OS
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
+.DS_Store
+Thumbs.db
