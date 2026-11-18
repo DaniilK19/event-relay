@@ -27,7 +27,7 @@ public sealed class EventRelayFixture : IAsyncLifetime
     public static readonly string AdminKey = $"test-admin-{Guid.NewGuid():N}";
     public static readonly string PublisherKey = $"test-publisher-{Guid.NewGuid():N}";
 
-    private readonly PostgreSqlContainer postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
+    private readonly PostgreSqlContainer postgres = new PostgreSqlBuilder("postgres:18-alpine").Build();
 
     private readonly ServiceBusContainer serviceBus =
         new ServiceBusBuilder("mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.1")
