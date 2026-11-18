@@ -1,0 +1,63 @@
+# Requests for the IDE HTTP client (Visual Studio, Rider, VS Code REST Client).
+# docker compose exposes the API on 8080; `dotnet run` uses 5080.
+@api = http://localhost:8080
+# Paste the keys from your .env (never commit real keys here).
+@publisherKey = PUBLISHER_API_KEY-from-.env
+@adminKey = ADMIN_API_KEY-from-.env
+
+### Health
+GET {{api}}/health
+
+### Create a subscription (the secret is returned only here)
+# The sample receiver does not know this generated secret and answers 401, so these deliveries end up
+# Failed with "http_401": the expected reaction to a signature the subscriber cannot verify.
+POST {{api}}/subscriptions
+X-Api-Key: {{adminKey}}
+Content-Type: application/json
+
+{
+  "name": "manual: Contoso Air delays",
+  "eventTypes": ["flight.delayed"],
+  "filter": { "airline": "CT" },
+  "webhookUrl": "http://webhook-receiver:8080/webhooks/manual"
+}
+
+### Rejected: host is not on the allowlist
+POST {{api}}/subscriptions
+X-Api-Key: {{adminKey}}
+Content-Type: application/json
+
+{
+  "name": "should fail",
+  "eventTypes": ["flight.*"],
+  "webhookUrl": "http://169.254.169.254/latest/meta-data/"
+}
+
+### List subscriptions (no secrets)
+GET {{api}}/subscriptions
+X-Api-Key: {{adminKey}}
+
+### Forbidden: a publisher key cannot manage subscriptions (403)
+GET {{api}}/subscriptions
+X-Api-Key: {{publisherKey}}
+
+### Unauthorized: no key (401)
+GET {{api}}/subscriptions
+
+### Publish an event (send it twice: the second answer is 200 with "duplicate": true)
+POST {{api}}/events
+X-Api-Key: {{publisherKey}}
+Content-Type: application/json
+
+{
+  "id": "0b9f5bb5-61c1-4bd4-8b52-7a1c0c3b5d11",
+  "type": "flight.delayed",
+  "source": "manual",
+  "attributes": { "airline": "CT", "flightNumber": "CT101", "origin": "NTH", "destination": "STH" },
+  "data": { "delayMinutes": 40, "reason": "Late inbound aircraft" }
+}
+
+### Delivery status of that event
+# The receiver's own subscriptions succeed; the one created above fails with "http_401" (see there).
+GET {{api}}/events/0b9f5bb5-61c1-4bd4-8b52-7a1c0c3b5d11/deliveries
+X-Api-Key: {{publisherKey}}
