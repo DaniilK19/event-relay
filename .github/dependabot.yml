@@ -10,6 +10,20 @@ updates:
     groups:
       nuget-minor-and-patch:
         update-types: [minor, patch]
+    # These packages ship with each .NET release and must match the target framework (net10.0, an
+    # LTS release). Moving to the next major .NET version means upgrading the SDK, target framework,
+    # images and all of these packages together, so their major versions are not bumped one by one.
+    ignore:
+      - dependency-name: "Microsoft.AspNetCore.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.EntityFrameworkCore*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Npgsql.EntityFrameworkCore.PostgreSQL"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "EFCore.NamingConventions"
+        update-types: ["version-update:semver-major"]
 
   # Also updates the commit SHAs that pin every action, together with their version comments.
   - package-ecosystem: github-actions
