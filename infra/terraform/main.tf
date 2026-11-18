@@ -17,7 +17,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 4.0"
+      version = "~> 5.14"
     }
     random = {
       source  = "hashicorp/random"
@@ -136,12 +136,11 @@ resource "azurerm_private_dns_zone" "postgres" {
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
-  name                  = "link-${local.name}"
-  private_dns_zone_name = azurerm_private_dns_zone.postgres.name
-  resource_group_name   = azurerm_resource_group.main.name
-  virtual_network_id    = azurerm_virtual_network.main.id
-  registration_enabled  = false
-  tags                  = local.tags
+  name                 = "link-${local.name}"
+  private_dns_zone_id  = azurerm_private_dns_zone.postgres.id
+  virtual_network_id   = azurerm_virtual_network.main.id
+  registration_enabled = false
+  tags                 = local.tags
 }
 
 # ---------------------------------------------------------------------------
